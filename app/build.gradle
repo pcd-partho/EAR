@@ -1,12 +1,13 @@
-apply plugin: 'com.android.application'
+﻿apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+apply plugin: 'com.google.gms.google-services'
 
 android {
-    namespace 'com.crash'
+    namespace 'com.myapp.app'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.crash"
+        applicationId "com.myapp.app"
         minSdk 26
         targetSdk 34
         versionCode 1
@@ -31,4 +32,9 @@ android {
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+    implementation platform('com.google.firebase:firebase-bom:33.1.2')
+    implementation 'com.google.firebase:firebase-auth-ktx'
+    implementation 'com.google.firebase:firebase-firestore-ktx'
 }

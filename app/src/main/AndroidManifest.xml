@@ -1,4 +1,6 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+﻿<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
@@ -6,7 +8,7 @@
         android:theme="@style/Theme.AppCompat">
 
         <activity
-            android:name=".MainActivity"
+            android:name=".LoginActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -14,6 +16,8 @@
             </intent-filter>
         </activity>
 
-    </application>
+        <activity android:name=".RegisterActivity" android:exported="false" />
+        <activity android:name=".MainActivity" android:exported="false" />
 
+    </application>
 </manifest>
