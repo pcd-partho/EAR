@@ -1,4 +1,4 @@
-﻿package com.myapp.app
+package com.myapp.app
 
 import android.content.Intent
 import android.os.Bundle
@@ -56,6 +56,7 @@ class RegisterActivity : AppCompatActivity() {
                     val userDoc = hashMapOf(
                         "email" to email,
                         "balance" to 0.0,
+                        "isAdmin" to false,
                         "createdAt" to System.currentTimeMillis()
                     )
 
