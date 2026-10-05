@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title> Crash </title>
+<style>
+  :root{
+    --bg:#0b0f1a; --panel:#12182a; --accent:#3ddc97; --red:#ff4d4d; --text:#e8e8e8; --muted:#8a8f98;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(--text); }
+  .container{ max-width:960px; margin:0 auto; padding:16px;}
+  .panel{ background:var(--panel); border-radius:12px; padding:16px; margin-bottom:16px;}
+  .multiplier{ font-size:56px; font-weight:bold; text-align:center; margin:10px 0; transition:color .2s;}
+  .multiplier.rising{ color:#f0c040;}
+  .multiplier.crashed{ color:var(--red);}
+  .chart-wrap{ position:relative; width:100%; border-radius:12px; overflow:hidden; background:#0b1020; }
+  canvas{ width:100%; height:320px; display:block; }
+  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+  input, button{ padding:10px 14px; border-radius:6px; border:1px solid #2a2f3a; background:#1f232c; color:var(--text); font-size:15px;}
+  button{ cursor:pointer; background:var(--accent); color:#06140d; font-weight:bold; border:none;}
+  button:disabled{ opacity:0.4; cursor:not-allowed;}
+  button.cashout{ background:#ffb020; color:#2a1c00;}
+  .status{ text-align:center; color:var(--muted); margin:6px 0;}
+  .fairness{ text-align:center; color:var(--muted); font-size:11px; word-break:break-all; }
+  .balance{ font-size:20px; font-weight:bold;}
+  .pill{ display:inline-block; padding:2px 8px; border-radius:20px; font-size:12px;}
+  .pill.win{ background:#143d2a; color:var(--accent);}
+  .pill.lose{ background:#3d1414; color:var(--red);}
+  .betrow{ display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #2a2f3a; font-size:14px;}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;">
+      <div>Balance: <span class="balance" id="balance">0.00</span> BDT</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="chart-wrap">
+      <canvas id="chart" width="960" height="320"></canvas>
+    </div>
+    <div class="multiplier" id="multiplierDisplay">1.00x</div>
+    <div class="status" id="statusText">Connecting...</div>
+    <div class="fairness" id="fairnessText"></div>
+
+    <div class="row" style="justify-content:center; margin-top:10px;">
+      <input type="number" id="betAmount" value="100" min="1" step="1" style="width:120px;">
+      <button id="betBtn" disabled>Place Bet</button>
+      <button id="cashoutBtn" class="cashout" disabled>Cash Out</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Live Bets (This Round)</h3>
+    <div id="betsFeed"><div class="status">No bets yet this round.</div></div>
+  </div>
+
+</div>
+
+<script>
+/* ===== Native bridge state ===== */
+let balance = 0;
+let myHasBet = false;
+let myCashedOut = false;
+let roundStatus = 'betting';
+let bettingStartTime = 0;
+let bettingDuration = 30000;
+let runningStartTime = null;
+let crashPoint = null;
+let serverSeedHash = '';
+let serverSeedRevealed = null;
+let betsFeed = [];
+let explosionSpawned = false;
+let crashElapsedCache = 1;
+let propAngle = 0;
+
+const el = id => document.getElementById(id);
+const balanceEl=el('balance'), multEl=el('multiplierDisplay'), statusEl=el('statusText'), fairnessEl=el('fairnessText');
+const betBtn=el('betBtn'), cashoutBtn=el('cashoutBtn'), betAmountInput=el('betAmount');
+const betsFeedEl=el('betsFeed');
+const canvas=el('chart'), ctx=canvas.getContext('2d');
+
+function fmt(n){ return Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+window.setBalance = function(bal){
+  balance = bal;
+  balanceEl.textContent = fmt(balance);
+};
+
+window.setMyBetState = function(hasBet, cashedOut){
+  myHasBet = hasBet;
+  myCashedOut = cashedOut;
+  updateButtons();
+};
+
+window.updateRound = function(data){
+  const prevStatus = roundStatus;
+  roundStatus = data.status;
+  bettingStartTime = data.bettingStartTime;
+  bettingDuration = data.bettingDuration;
+  runningStartTime = data.runningStartTime;
+  crashPoint = data.crashPoint;
+  serverSeedHash = data.serverSeedHash;
+  serverSeedRevealed = data.serverSeed;
+
+  if (roundStatus === 'betting' && prevStatus !== 'betting') {
+    explosionSpawned = false;
+  }
+  if (roundStatus === 'crashed' && prevStatus !== 'crashed') {
+    crashElapsedCache = Math.log(Math.max(crashPoint,1.0001)) / Math.log(1.0618) / 10;
+  }
+  updateButtons();
+};
+
+window.updateBetsFeed = function(arr){
+  betsFeed = arr;
+  renderBetsFeed();
+};
+
+function updateButtons(){
+  betBtn.disabled = (roundStatus !== 'betting') || myHasBet;
+  cashoutBtn.disabled = !(roundStatus === 'running' && myHasBet && !myCashedOut);
+}
+
+function renderBetsFeed(){
+  if (!betsFeed.length) {
+    betsFeedEl.innerHTML = '<div class="status">No bets yet this round.</div>';
+    return;
+  }
+  betsFeedEl.innerHTML = betsFeed.map(b => {
+    let resultHtml;
+    if (b.cashedOutAt) {
+      resultHtml = `<span class="pill win">Cashed @ ${Number(b.cashedOutAt).toFixed(2)}x (+${fmt(b.payout)})</span>`;
+    } else if (roundStatus === 'crashed') {
+      resultHtml = `<span class="pill lose">Lost</span>`;
+    } else {
+      resultHtml = `<span class="pill" style="background:#2a2f3a;color:#ccc;">Playing...</span>`;
+    }
+    return `<div class="betrow"><span>${b.name}</span><span>${fmt(b.amount)} BDT</span>${resultHtml}</div>`;
+  }).join('');
+}
+
+betBtn.addEventListener('click', () => {
+  const amount = parseFloat(betAmountInput.value);
+  if (!amount || amount <= 0) { alert('Enter a valid bet amount.'); return; }
+  if (amount > balance) { alert('Insufficient balance.'); return; }
+  if (roundStatus !== 'betting') { alert('Betting is closed for this round.'); return; }
+  if (typeof Android !== 'undefined') Android.placeBet(amount);
+});
+
+cashoutBtn.addEventListener('click', () => {
+  if (typeof Android !== 'undefined') Android.cashOut();
+});
+
+/* ===== Visuals (plane / mountains / explosion) ===== */
+const planeSVG = `
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="0 0 160 90">
+  <defs>
+    <radialGradient id="glow" cx="55%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffcc44" stop-opacity="0.7"/>
+      <stop offset="40%" stop-color="#ffaa22" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#ff8800" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#e89820"/>
+      <stop offset="40%" stop-color="#ffc040"/>
+      <stop offset="100%" stop-color="#f0a820"/>
+    </linearGradient>
+    <linearGradient id="wing" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffc848"/>
+      <stop offset="100%" stop-color="#e09018"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="88" cy="48" rx="55" ry="38" fill="url(#glow)"/>
+  <ellipse cx="78" cy="58" rx="42" ry="9" fill="url(#wing)" stroke="#c47810" stroke-width="1"/>
+  <path d="M25,50 C28,42 45,36 70,35 C95,34 115,38 130,48 C118,55 100,60 75,61 C50,62 32,58 25,50 Z" fill="url(#body)" stroke="#c07010" stroke-width="1"/>
+  <ellipse cx="80" cy="38" rx="38" ry="8" fill="url(#wing)" stroke="#c47810" stroke-width="1"/>
+  <line x1="60" y1="38" x2="58" y2="58" stroke="#a06010" stroke-width="2"/>
+  <line x1="95" y1="38" x2="95" y2="57" stroke="#a06010" stroke-width="2"/>
+  <ellipse cx="105" cy="42" rx="12" ry="8" fill="#2a3548"/>
+  <ellipse cx="107" cy="40" rx="7" ry="5" fill="rgba(140,190,255,0.4)"/>
+  <path d="M28,48 L12,28 L22,28 L32,46 Z" fill="#e89818" stroke="#b07010" stroke-width="1"/>
+  <ellipse cx="22" cy="52" rx="14" ry="5" fill="#e8a020" stroke="#c47810" stroke-width="0.8"/>
+  <ellipse cx="128" cy="48" rx="10" ry="9" fill="#d88818"/>
+  <circle cx="138" cy="48" r="5" fill="#3a3020"/>
+  <circle cx="70" cy="68" r="5" fill="#222"/>
+  <circle cx="95" cy="67" r="4.5" fill="#222"/>
+  <circle cx="70" cy="68" r="5" fill="none" stroke="#555" stroke-width="1"/>
+  <circle cx="95" cy="67" r="4.5" fill="none" stroke="#555" stroke-width="1"/>
+</svg>`;
+
+const planeImg = new Image();
+planeImg.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(planeSVG);
+let planeReady = false;
+planeImg.onload = () => { planeReady = true; };
+
+function getPoint(elapsed, t){
+  const m = Math.pow(1.0618, t * 10);
+  const x = (t / Math.max(elapsed, 0.001)) * (canvas.width * 0.92) + 20;
+  const y = canvas.height - Math.min((m - 1) * 26, canvas.height - 70) - 35;
+  return { x, y, m };
+}
+
+function drawMountains(){
+  ctx.fillStyle = '#141c30';
+  ctx.beginPath();
+  ctx.moveTo(0, canvas.height);
+  for (let x = 0; x <= canvas.width; x += 8) {
+    const h = 55 + Math.sin(x * 0.012) * 28 + Math.sin(x * 0.03) * 18 + Math.sin(x * 0.07) * 8;
+    ctx.lineTo(x, canvas.height - h);
+  }
+  ctx.lineTo(canvas.width, canvas.height);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#1a2438';
+  ctx.beginPath();
+  ctx.moveTo(0, canvas.height);
+  for (let x = 0; x <= canvas.width; x += 6) {
+    const h = 32 + Math.sin(x * 0.018 + 1.2) * 22 + Math.sin(x * 0.045) * 12;
+    ctx.lineTo(x, canvas.height - h);
+  }
+  ctx.lineTo(canvas.width, canvas.height);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawPropeller(cx, cy, angle, size){
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  ctx.strokeStyle = 'rgba(255, 230, 180, 0.2)';
+  ctx.lineWidth = size * 0.35;
+  ctx.beginPath();
+  ctx.moveTo(0, -size); ctx.lineTo(0, size);
+  ctx.moveTo(-size * 0.9, 0); ctx.lineTo(size * 0.9, 0);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(240, 220, 180, 0.9)';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, -size); ctx.lineTo(0, size);
+  ctx.moveTo(-size * 0.9, 0); ctx.lineTo(size * 0.9, 0);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlane(x, y, angle){
+  if (!planeReady) return;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  const w = 110, h = 62;
+  ctx.drawImage(planeImg, -w * 0.55, -h * 0.55, w, h);
+  drawPropeller(w * 0.42, 0, propAngle, 18);
+  ctx.restore();
+}
+
+let explosionParticles = [];
+let explosionTime = 0;
+
+function spawnExplosion(x, y){
+  explosionParticles = [];
+  explosionTime = performance.now();
+  for (let i = 0; i < 60; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const speed = 2.5 + Math.random() * 9;
+    explosionParticles.push({
+      x, y,
+      vx: Math.cos(a) * speed,
+      vy: Math.sin(a) * speed,
+      life: 1,
+      size: 3 + Math.random() * 8,
+      color: ['#ff4d4d', '#ffb020', '#ff8800', '#ffffff', '#ffcc00', '#ff6600'][Math.floor(Math.random() * 6)]
+    });
+  }
+}
+
+function drawExplosion(){
+  const now = performance.now();
+  const age = (now - explosionTime) / 1000;
+  if (age > 1.4) return;
+  explosionParticles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.18;
+    p.life -= 0.022;
+    if (p.life > 0) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawIdleChart(){
+  ctx.clearRect(0,0,canvas.width, canvas.height);
+  const sky = ctx.createLinearGradient(0,0,0,canvas.height);
+  sky.addColorStop(0, '#0a0e1c'); sky.addColorStop(1, '#121a2c');
+  ctx.fillStyle = sky; ctx.fillRect(0,0,canvas.width, canvas.height);
+  drawMountains();
+}
+
+function drawChart(elapsed, showPlane, displayMult){
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  sky.addColorStop(0, '#0a0e1c');
+  sky.addColorStop(0.6, '#0e1424');
+  sky.addColorStop(1, '#121a2c');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  drawMountains();
+
+  ctx.strokeStyle = roundStatus === 'crashed' ? '#ff4d4d' : '#f5d040';
+  ctx.lineWidth = 3.5;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.shadowColor = roundStatus === 'crashed' ? 'rgba(255,70,70,0.55)' : 'rgba(255,210,40,0.65)';
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  const points = 140;
+  let lastX = 20, lastY = canvas.height - 35;
+  for (let i = 0; i <= points; i++) {
+    const t = (i / points) * elapsed;
+    const pt = getPoint(elapsed, t);
+    if (i === 0) ctx.moveTo(pt.x, pt.y);
+    else ctx.lineTo(pt.x, pt.y);
+    lastX = pt.x;
+    lastY = pt.y;
+  }
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  if (showPlane && roundStatus === 'running') {
+    propAngle += 0.6;
+    const t1 = Math.max(0, elapsed - 0.07);
+    const p1 = getPoint(elapsed, t1);
+    const angle = Math.atan2(lastY - p1.y, lastX - p1.x);
+    drawPlane(lastX, lastY, angle);
+  }
+
+  if (roundStatus === 'crashed') {
+    if (!explosionSpawned) {
+      spawnExplosion(lastX, lastY);
+      explosionSpawned = true;
+    }
+    drawExplosion();
+  }
+
+  ctx.font = 'bold 64px Segoe UI, Arial, sans-serif';
+  ctx.fillStyle = roundStatus === 'crashed' ? '#ff4d4d' : 'rgba(230,235,245,0.92)';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(displayMult.toFixed(2) + 'x', canvas.width - 36, canvas.height * 0.55);
+}
+
+function animLoop(){
+  const now = Date.now();
+
+  if (roundStatus === 'betting') {
+    const remaining = Math.max(0, bettingDuration - (now - bettingStartTime));
+    statusEl.textContent = `Place your bet! Next round in ${Math.ceil(remaining/1000)}s`;
+    multEl.textContent = '1.00x';
+    multEl.className = 'multiplier';
+    fairnessEl.textContent = serverSeedHash ? `Hash: ${serverSeedHash.slice(0,24)}...` : '';
+    drawIdleChart();
+  } else if (roundStatus === 'running' && runningStartTime) {
+    const elapsed = (now - runningStartTime) / 1000;
+    let mult = Math.pow(1.0618, elapsed * 10);
+    if (crashPoint && mult >= crashPoint) mult = crashPoint;
+    multEl.textContent = mult.toFixed(2) + 'x';
+    multEl.className = 'multiplier rising';
+    statusEl.textContent = 'Round in progress...';
+    drawChart(elapsed, true, mult);
+  } else if (roundStatus === 'crashed') {
+    const mult = crashPoint || 1;
+    multEl.textContent = mult.toFixed(2) + 'x';
+    multEl.className = 'multiplier crashed';
+    statusEl.textContent = `Crashed at ${mult.toFixed(2)}x`;
+    fairnessEl.textContent = serverSeedRevealed ? `Seed revealed: ${serverSeedRevealed.slice(0,24)}...` : '';
+    drawChart(crashElapsedCache, false, mult);
+  }
+
+  requestAnimationFrame(animLoop);
+}
+
+requestAnimationFrame(animLoop);
+</script>
+</body>
+</html>

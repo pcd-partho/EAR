@@ -1,27 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <uses-permission android:name="android.permission.INTERNET" />
-
-    <application
-        android:allowBackup="true"
-        android:label="@string/app_name"
-        android:theme="@style/Theme.AppCompat">
-
-        <activity
-            android:name=".LoginActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <activity android:name=".RegisterActivity" android:exported="false" />
-        <activity android:name=".MainActivity" android:exported="false" />
-        <activity android:name=".AddMoneyActivity" android:exported="false" />
-        <activity android:name=".WithdrawActivity" android:exported="false" />
-        <activity android:name=".TransactionHistoryActivity" android:exported="false" />
-        <activity android:name=".AdminActivity" android:exported="false" />
-
-    </application>
+<uses-permission android:name="android.permission.INTERNET"/>
+<application android:allowBackup="true" android:label="@string/app_name" android:theme="@style/Theme.AppCompat">
+<activity android:name=".LoginActivity" android:exported="true">
+<intent-filter>
+<action android:name="android.intent.action.MAIN"/>
+<category android:name="android.intent.category.LAUNCHER"/>
+</intent-filter>
+</activity>
+<activity android:name=".RegisterActivity" android:exported="false"/>
+<activity android:name=".MainActivity" android:exported="false"/>
+<activity android:name=".AddMoneyActivity" android:exported="false"/>
+<activity android:name=".WithdrawActivity" android:exported="false"/>
+<activity android:name=".TransactionHistoryActivity" android:exported="false"/>
+<activity android:name=".AdminActivity" android:exported="false"/>
+<activity android:name=".GameActivity" android:exported="false"/>
+</application>
 </manifest>

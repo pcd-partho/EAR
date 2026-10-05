@@ -34,6 +34,12 @@ class MainActivity : AppCompatActivity() {
         balanceText.textSize = 28f
         balanceText.setPadding(0, 20, 0, 40)
 
+        val playGameBtn = Button(this)
+        playGameBtn.text = "Play Crash Game"
+        playGameBtn.setOnClickListener {
+            startActivity(Intent(this, GameActivity::class.java))
+        }
+
         val addMoneyBtn = Button(this)
         addMoneyBtn.text = "Add Money"
         addMoneyBtn.setOnClickListener {
@@ -69,6 +75,7 @@ class MainActivity : AppCompatActivity() {
 
         layout.addView(welcome)
         layout.addView(balanceText)
+        layout.addView(playGameBtn)
         layout.addView(addMoneyBtn)
         layout.addView(withdrawBtn)
         layout.addView(historyBtn)
